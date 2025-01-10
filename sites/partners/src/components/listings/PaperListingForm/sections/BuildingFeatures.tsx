@@ -12,11 +12,11 @@ type BuildingFeaturesProps = {
 
 const BuildingFeatures = (props: BuildingFeaturesProps) => {
   const formMethods = useFormContext()
-  const { profile } = useContext(AuthContext)
+  const { doJurisdictionsHaveFeatureFlagOn } = useContext(AuthContext)
 
   // eslint-disable-next-line @typescript-eslint/unbound-method
   const { register, watch } = formMethods
-  const jurisdiction = watch("jurisdiction.id")
+  const jurisdiction = watch("jurisdictions.id")
 
   const featureOptions = useMemo(() => {
     return listingFeatures.map((item) => ({
@@ -27,9 +27,10 @@ const BuildingFeatures = (props: BuildingFeaturesProps) => {
     }))
   }, [register, props.existingFeatures])
 
-  const enableAccessibilityFeatures = profile?.jurisdictions?.find(
-    (j) => j.id === jurisdiction
-  )?.enableAccessibilityFeatures
+  const enableAccessibilityFeatures = doJurisdictionsHaveFeatureFlagOn(
+    "enableAccessibilityFeatures",
+    jurisdiction
+  )
 
   return (
     <>
@@ -107,10 +108,9 @@ const BuildingFeatures = (props: BuildingFeaturesProps) => {
         {!enableAccessibilityFeatures ? null : (
           <Grid.Row>
             <FieldValue label={t("listings.sections.accessibilityFeatures")}>
-              {/* TODO: default checked doesn't appear to be working even on main*/}
               <FieldGroup
                 type="checkbox"
-                name="listingFeatures"
+                name="accessibilityFeatures"
                 fields={featureOptions}
                 register={register}
                 fieldGroupClassName="grid grid-cols-3 mt-4"
