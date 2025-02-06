@@ -5,6 +5,7 @@ import { ListingFilterParams } from './listings-filter-params.dto';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsString,
   MinLength,
@@ -90,4 +91,12 @@ export class ListingsQueryParams extends PaginationAllowsAllQueryParams {
     groups: [ValidationsGroupsEnum.default],
   })
   search?: string;
+
+  @Expose()
+  @ApiPropertyOptional({
+    example: false,
+    type: Boolean,
+  })
+  @IsBoolean({ groups: [ValidationsGroupsEnum.default] })
+  enableUnitGroups?: boolean;
 }

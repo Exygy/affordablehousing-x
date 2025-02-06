@@ -195,11 +195,34 @@ export class ListingService implements OnModuleInit {
       }
     }
 
+    const viewInclude = views[params.view ?? 'full'];
+
+    const finalInclude = params.enableUnitGroups
+      ? {
+          ...viewInclude,
+          units: undefined,
+          unitGroups: {
+            include: {
+              unitTypes: true,
+              unitGroupAmiLevels: {
+                include: {
+                  amiChart: {
+                    include: {
+                      jurisdictions: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        }
+      : viewInclude;
+
     const listingsRaw = await this.prisma.listings.findMany({
       skip: calculateSkip(params.limit, page),
       take: calculateTake(params.limit),
       orderBy: buildOrderByForListings(params.orderBy, params.orderDir),
-      include: views[params.view ?? 'full'],
+      include: finalInclude,
       where: whereClause,
     });
 
@@ -479,8 +502,13 @@ export class ListingService implements OnModuleInit {
     listingId: string,
     lang: LanguagesEnum = LanguagesEnum.en,
     view: ListingViews = ListingViews.full,
+    enableUnitGroups = false,
   ): Promise<Listing> {
-    const listingRaw = await this.findOrThrow(listingId, view);
+    const listingRaw = await this.findOrThrow(
+      listingId,
+      view,
+      enableUnitGroups,
+    );
 
     let result = mapTo(Listing, listingRaw);
 
@@ -654,10 +682,29 @@ export class ListingService implements OnModuleInit {
         jurisdictionId: dto.jurisdictions.id,
       },
     );
+    if (dto.units && dto.unitGroups) {
+      throw new BadRequestException('Cannot provide both units and unitGroups');
+    }
+
+    const rawJurisdiction = await this.prisma.jurisdictions.findFirst({
+      where: {
+        id: dto.jurisdictions.id,
+      },
+      include: {
+        featureFlags: true,
+      },
+    });
+
+    const enableUnitGroups = rawJurisdiction?.featureFlags?.find(
+      (featureFlag) => featureFlag.name === 'enableUnitGroups',
+    )?.active;
 
     dto.unitsAvailable =
-      dto.reviewOrderType !== ReviewOrderTypeEnum.waitlist && dto.units
-        ? dto.units.length
+      dto.reviewOrderType !== ReviewOrderTypeEnum.waitlist &&
+      (enableUnitGroups ? dto?.unitGroups?.length : dto?.units?.length)
+        ? enableUnitGroups
+          ? dto?.unitGroups?.length
+          : dto?.units?.length
         : 0;
 
     const rawListing = await this.prisma.listings.create({
@@ -810,62 +857,107 @@ export class ListingService implements OnModuleInit {
               },
             }
           : undefined,
-        units: dto.units
-          ? {
-              create: dto.units.map((unit) => ({
-                amiPercentage: unit.amiPercentage,
-                annualIncomeMin: unit.annualIncomeMin,
-                monthlyIncomeMin: unit.monthlyIncomeMin,
-                floor: unit.floor,
-                annualIncomeMax: unit.annualIncomeMax,
-                maxOccupancy: unit.maxOccupancy,
-                minOccupancy: unit.minOccupancy,
-                monthlyRent: unit.monthlyRent,
-                numBathrooms: unit.numBathrooms,
-                numBedrooms: unit.numBedrooms,
-                number: unit.number,
-                sqFeet: unit.sqFeet,
-                monthlyRentAsPercentOfIncome: unit.monthlyRentAsPercentOfIncome,
-                bmrProgramChart: unit.bmrProgramChart,
-                unitTypes: unit.unitTypes
-                  ? {
-                      connect: {
-                        id: unit.unitTypes.id,
-                      },
-                    }
-                  : undefined,
-                amiChart: unit.amiChart
-                  ? {
-                      connect: {
-                        id: unit.amiChart.id,
-                      },
-                    }
-                  : undefined,
-                unitAmiChartOverrides: unit.unitAmiChartOverrides
-                  ? {
-                      create: {
-                        items: unit.unitAmiChartOverrides.items,
-                      },
-                    }
-                  : undefined,
-                unitAccessibilityPriorityTypes:
-                  unit.unitAccessibilityPriorityTypes
+        units:
+          !enableUnitGroups && dto.units
+            ? {
+                create: dto.units.map((unit) => ({
+                  amiPercentage: unit.amiPercentage,
+                  annualIncomeMin: unit.annualIncomeMin,
+                  monthlyIncomeMin: unit.monthlyIncomeMin,
+                  floor: unit.floor,
+                  annualIncomeMax: unit.annualIncomeMax,
+                  maxOccupancy: unit.maxOccupancy,
+                  minOccupancy: unit.minOccupancy,
+                  monthlyRent: unit.monthlyRent,
+                  numBathrooms: unit.numBathrooms,
+                  numBedrooms: unit.numBedrooms,
+                  number: unit.number,
+                  sqFeet: unit.sqFeet,
+                  monthlyRentAsPercentOfIncome:
+                    unit.monthlyRentAsPercentOfIncome,
+                  bmrProgramChart: unit.bmrProgramChart,
+                  unitTypes: unit.unitTypes
                     ? {
                         connect: {
-                          id: unit.unitAccessibilityPriorityTypes.id,
+                          id: unit.unitTypes.id,
                         },
                       }
                     : undefined,
-                unitRentTypes: unit.unitRentTypes
-                  ? {
-                      connect: {
-                        id: unit.unitRentTypes.id,
+                  amiChart: unit.amiChart
+                    ? {
+                        connect: {
+                          id: unit.amiChart.id,
+                        },
+                      }
+                    : undefined,
+                  unitAmiChartOverrides: unit.unitAmiChartOverrides
+                    ? {
+                        create: {
+                          items: unit.unitAmiChartOverrides.items,
+                        },
+                      }
+                    : undefined,
+                  unitAccessibilityPriorityTypes:
+                    unit.unitAccessibilityPriorityTypes
+                      ? {
+                          connect: {
+                            id: unit.unitAccessibilityPriorityTypes.id,
+                          },
+                        }
+                      : undefined,
+                  unitRentTypes: unit.unitRentTypes
+                    ? {
+                        connect: {
+                          id: unit.unitRentTypes.id,
+                        },
+                      }
+                    : undefined,
+                })),
+              }
+            : undefined,
+        unitGroups:
+          enableUnitGroups && dto.unitGroups
+            ? {
+                create: dto.unitGroups.map((group) => ({
+                  bathroomMax: group.bathroomMax,
+                  bathroomMin: group.bathroomMin,
+                  floorMax: group.floorMax,
+                  floorMin: group.floorMin,
+                  maxOccupancy: group.maxOccupancy,
+                  minOccupancy: group.minOccupancy,
+                  openWaitlist: group.openWaitlist,
+                  sqFeetMax: group.sqFeetMax,
+                  sqFeetMin: group.sqFeetMin,
+                  totalAvailable: group.totalAvailable,
+                  totalCount: group.totalCount,
+                  unitGroupAmiLevels: {
+                    create: group.unitGroupAmiLevels.map((level) => ({
+                      amiPercentage: level.amiPercentage,
+                      monthlyRentDeterminationType:
+                        level.monthlyRentDeterminationType,
+                      percentageOfIncomeValue: level.percentageOfIncomeValue,
+                      flatRentValue: level.flatRentValue,
+                      amiChart: {
+                        connect: { id: level.amiChart.id },
                       },
-                    }
-                  : undefined,
-              })),
-            }
-          : undefined,
+                    })),
+                  },
+                  unitAccessibilityPriorityTypes:
+                    group.unitAccessibilityPriorityTypes
+                      ? {
+                          connect: {
+                            id: group.unitAccessibilityPriorityTypes.id,
+                          },
+                        }
+                      : undefined,
+                  unitTypes: {
+                    connect: group.unitTypes.map((type) => ({
+                      id: type.id,
+                    })),
+                  },
+                })),
+              }
+            : undefined,
         unitsSummary: dto.unitsSummary
           ? {
               create: dto.unitsSummary.map((unitSummary) => ({
@@ -1114,9 +1206,32 @@ export class ListingService implements OnModuleInit {
     This will either find a listing or throw an error
     a listing view can be provided which will add the joins to produce that view correctly
   */
-  async findOrThrow(id: string, view?: ListingViews) {
+  async findOrThrow(
+    id: string,
+    view?: ListingViews,
+    enableUnitGroups?: boolean,
+  ) {
+    const viewInclude = view ? views[view] : undefined;
+    if (enableUnitGroups && viewInclude) {
+      viewInclude.units = undefined;
+      viewInclude.unitGroups = {
+        include: {
+          unitTypes: true,
+          unitGroupAmiLevels: {
+            include: {
+              amiChart: {
+                include: {
+                  jurisdictions: true,
+                },
+              },
+            },
+          },
+        },
+      };
+    }
+
     const listing = await this.prisma.listings.findUnique({
-      include: view ? views[view] : undefined,
+      include: viewInclude,
       where: {
         id,
       },
@@ -1240,10 +1355,29 @@ export class ListingService implements OnModuleInit {
         jurisdictionId: storedListing.jurisdictionId,
       },
     );
+    if (dto.units && dto.unitGroups) {
+      throw new BadRequestException('Cannot provide both units and unitGroups');
+    }
+
+    const rawJurisdiction = await this.prisma.jurisdictions.findFirst({
+      where: {
+        id: dto.jurisdictions.id,
+      },
+      include: {
+        featureFlags: true,
+      },
+    });
+
+    const enableUnitGroups = rawJurisdiction?.featureFlags?.find(
+      (featureFlag) => featureFlag.name === 'enableUnitGroups',
+    )?.active;
 
     dto.unitsAvailable =
-      dto.reviewOrderType !== ReviewOrderTypeEnum.waitlist && dto.units
-        ? dto.units.length
+      dto.reviewOrderType !== ReviewOrderTypeEnum.waitlist &&
+      (enableUnitGroups ? dto?.unitGroups?.length : dto?.units?.length)
+        ? enableUnitGroups
+          ? dto?.unitGroups?.length
+          : dto?.units?.length
         : 0;
 
     // We need to save the assets before saving it to the listing_images table
@@ -1303,12 +1437,29 @@ export class ListingService implements OnModuleInit {
     // Wrap the deletion and update in one transaction so that units aren't lost if update fails
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const transactions = await this.prisma.$transaction([
-      // delete all connected units before recreating in update
-      this.prisma.units.deleteMany({
-        where: {
-          listingId: storedListing.id,
-        },
-      }),
+      // Conditionally delete either units or unitGroups based on feature flag
+      ...(enableUnitGroups
+        ? [
+            this.prisma.unitGroupAmiLevels.deleteMany({
+              where: {
+                unitGroup: {
+                  listingId: storedListing.id,
+                },
+              },
+            }),
+            this.prisma.unitGroup.deleteMany({
+              where: {
+                listingId: storedListing.id,
+              },
+            }),
+          ]
+        : [
+            this.prisma.units.deleteMany({
+              where: {
+                listingId: storedListing.id,
+              },
+            }),
+          ]),
       // Delete all listing images before creating new ones
       this.prisma.listingImages.deleteMany({
         where: {
@@ -1507,63 +1658,112 @@ export class ListingService implements OnModuleInit {
                 },
               }
             : undefined,
-          units: dto.units
-            ? {
-                create: dto.units.map((unit) => ({
-                  amiPercentage: unit.amiPercentage,
-                  annualIncomeMin: unit.annualIncomeMin,
-                  monthlyIncomeMin: unit.monthlyIncomeMin,
-                  floor: unit.floor,
-                  annualIncomeMax: unit.annualIncomeMax,
-                  maxOccupancy: unit.maxOccupancy,
-                  minOccupancy: unit.minOccupancy,
-                  monthlyRent: unit.monthlyRent,
-                  numBathrooms: unit.numBathrooms,
-                  numBedrooms: unit.numBedrooms,
-                  number: unit.number,
-                  sqFeet: unit.sqFeet,
-                  monthlyRentAsPercentOfIncome:
-                    unit.monthlyRentAsPercentOfIncome,
-                  bmrProgramChart: unit.bmrProgramChart,
-                  unitTypes: unit.unitTypes
-                    ? {
-                        connect: {
-                          id: unit.unitTypes.id,
-                        },
-                      }
-                    : undefined,
-                  amiChart: unit.amiChart
-                    ? {
-                        connect: {
-                          id: unit.amiChart.id,
-                        },
-                      }
-                    : undefined,
-                  unitAmiChartOverrides: unit.unitAmiChartOverrides
-                    ? {
-                        create: {
-                          items: unit.unitAmiChartOverrides.items,
-                        },
-                      }
-                    : undefined,
-                  unitAccessibilityPriorityTypes:
-                    unit.unitAccessibilityPriorityTypes
+          units:
+            !enableUnitGroups && dto.units
+              ? {
+                  create: dto.units.map((unit) => ({
+                    amiPercentage: unit.amiPercentage,
+                    annualIncomeMin: unit.annualIncomeMin,
+                    monthlyIncomeMin: unit.monthlyIncomeMin,
+                    floor: unit.floor,
+                    annualIncomeMax: unit.annualIncomeMax,
+                    maxOccupancy: unit.maxOccupancy,
+                    minOccupancy: unit.minOccupancy,
+                    monthlyRent: unit.monthlyRent,
+                    numBathrooms: unit.numBathrooms,
+                    numBedrooms: unit.numBedrooms,
+                    number: unit.number,
+                    sqFeet: unit.sqFeet,
+                    monthlyRentAsPercentOfIncome:
+                      unit.monthlyRentAsPercentOfIncome,
+                    bmrProgramChart: unit.bmrProgramChart,
+                    unitTypes: unit.unitTypes
                       ? {
                           connect: {
-                            id: unit.unitAccessibilityPriorityTypes.id,
+                            id: unit.unitTypes.id,
                           },
                         }
                       : undefined,
-                  unitRentTypes: unit.unitRentTypes
-                    ? {
-                        connect: {
-                          id: unit.unitRentTypes.id,
-                        },
-                      }
-                    : undefined,
-                })),
-              }
-            : undefined,
+                    amiChart: unit.amiChart
+                      ? {
+                          connect: {
+                            id: unit.amiChart.id,
+                          },
+                        }
+                      : undefined,
+                    unitAmiChartOverrides: unit.unitAmiChartOverrides
+                      ? {
+                          create: {
+                            items: unit.unitAmiChartOverrides.items,
+                          },
+                        }
+                      : undefined,
+                    unitAccessibilityPriorityTypes:
+                      unit.unitAccessibilityPriorityTypes
+                        ? {
+                            connect: {
+                              id: unit.unitAccessibilityPriorityTypes.id,
+                            },
+                          }
+                        : undefined,
+                    unitRentTypes: unit.unitRentTypes
+                      ? {
+                          connect: {
+                            id: unit.unitRentTypes.id,
+                          },
+                        }
+                      : undefined,
+                  })),
+                }
+              : undefined,
+          unitGroups:
+            enableUnitGroups && dto.unitGroups
+              ? {
+                  create: dto.unitGroups.map((group) => ({
+                    bathroomMax: group.bathroomMax,
+                    bathroomMin: group.bathroomMin,
+                    floorMax: group.floorMax,
+                    floorMin: group.floorMin,
+                    maxOccupancy: group.maxOccupancy,
+                    minOccupancy: group.minOccupancy,
+                    openWaitlist: group.openWaitlist,
+                    sqFeetMin: group.sqFeetMin,
+                    sqFeetMax: group.sqFeetMax,
+                    totalCount: group.totalCount,
+                    totalAvailable: group.totalAvailable,
+                    unitTypes: group.unitTypes
+                      ? {
+                          connect: group.unitTypes.map((type) => ({
+                            id: type.id,
+                          })),
+                        }
+                      : undefined,
+                    unitGroupAmiLevels: group.unitGroupAmiLevels
+                      ? {
+                          create: group.unitGroupAmiLevels.map((level) => ({
+                            amiPercentage: level.amiPercentage,
+                            flatRentValue: level.flatRentValue,
+                            monthlyRentDeterminationType:
+                              level.monthlyRentDeterminationType,
+                            percentageOfIncomeValue:
+                              level.percentageOfIncomeValue,
+                            amiChart: {
+                              connect: { id: level.amiChart.id },
+                            },
+                          })),
+                        }
+                      : undefined,
+                    unitAccessibilityPriorityTypes:
+                      group.unitAccessibilityPriorityTypes
+                        ? {
+                            connect: {
+                              id: group.unitAccessibilityPriorityTypes.id,
+                            },
+                          }
+                        : undefined,
+                  })),
+                }
+              : undefined,
           unitsSummary: dto.unitsSummary
             ? {
                 create: dto.unitsSummary.map((unitSummary) => ({
